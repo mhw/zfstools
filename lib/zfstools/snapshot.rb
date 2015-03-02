@@ -1,9 +1,10 @@
 module Zfs
   class Snapshot
     @@stale_snapshot_size = false
-    attr_reader :name
+    attr_reader :name, :dataset_name, :snapshot_name
     def initialize(name, used=nil)
       @name = name
+      @dataset_name, @snapshot_name = name.split('@')
       @used = used
     end
 

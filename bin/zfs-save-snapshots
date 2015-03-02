@@ -1,0 +1,84 @@
+#! /usr/bin/env ruby
+
+lib_dir = File.join(File.dirname(__FILE__), '..', 'lib')
+$LOAD_PATH.unshift lib_dir if File.directory?(lib_dir)
+
+require 'getoptlong'
+require 'pathname'
+require 'zfstools'
+
+opts = GetoptLong.new(
+  [ "--pool",                            "-P",           GetoptLong::REQUIRED_ARGUMENT ],
+  [ "--dry-run",                         "-n",           GetoptLong::NO_ARGUMENT ],
+  [ "--verbose",                         "-v",           GetoptLong::NO_ARGUMENT ]
+)
+
+$dry_run = false
+pool = nil
+skip = 1
+opts.each do |opt, arg|
+  case opt
+  when '--pool'
+    pool = arg
+  when '--dry-run'
+    $dry_run = true
+  when '--verbose'
+    $verbose = true
+  end
+end
+
+def usage
+  puts <<-EOF
+Usage: #{$0} [-P pool] [-nv] DIR INTERVAL
+  EOF
+  format = "    %-15s %s"
+  puts format % ["-P pool", "Act only on the specified pool."]
+  puts format % ["-n", "Do a dry-run. Nothing is committed. Only show what would be done."]
+  puts format % ["-v", "Show what is being done."]
+  puts format % ["DIR", "The directory to save snapshots to."]
+  puts format % ["INTERVAL", "The snapshot interval to save."]
+  exit
+end
+
+usage if ARGV.length < 2
+
+def in_pairs(list)
+  previous = nil
+  list.each do |current|
+    yield current, previous unless previous.nil?
+    previous = current
+  end
+end
+
+def timestamp_of(snapshot)
+  name = snapshot.snapshot_name.dup
+  name.slice!($prefix_re)
+  name
+end
+
+output = Pathname.new(ARGV[0])
+interval = ARGV[1]
+prefix = snapshot_prefix(interval)
+prefix_match = "@#{prefix}"
+$prefix_re = %r{\A#{Regexp.escape(prefix)}}
+
+datasets = find_eligible_datasets(interval, pool)
+
+datasets['included'].each do |dataset|
+  snapshots = Zfs::Snapshot.list(dataset.name).select {|s| s.name.include?(prefix_match) }.reverse
+  in_pairs(snapshots) do |to, from|
+    stream = output + "#{File.basename(dataset.name)}-#{interval}-#{timestamp_of(from)}-#{timestamp_of(to)}.zfsstream"
+    stream_lrz = stream.sub_ext('.zfsstream.lrz')
+    unless stream_lrz.exist?
+      unless stream.exist?
+        # previously used -R -I
+        cmd = "zfs send #{$verbose ? '-v ' : ''}-I #{from.snapshot_name} #{to.name} >#{stream}"
+        puts cmd if $verbose
+        system(cmd) unless $dry_run
+      end
+      cmd = "lrzip -D #{$verbose ? '' : '-q '}#{stream}"
+      puts cmd if $verbose
+      system(cmd) unless $dry_run
+    end
+  end
+end
