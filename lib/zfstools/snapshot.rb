@@ -30,7 +30,12 @@ module Zfs
       flags=[]
       flags << "-d 1" if dataset and !options['recursive']
       flags << "-r" if options['recursive']
-      cmd = "zfs list #{flags.join(" ")} -H -t snapshot -o name,used -S name"
+      if options['sort']
+        flags << "-S #{options['sort']}"
+      else
+        flags << "-S name"
+      end
+      cmd = "zfs list #{flags.join(" ")} -H -t snapshot -o name,used"
       cmd += " \"#{dataset}\"" if dataset
       puts cmd if $debug
       IO.popen cmd do |io|
