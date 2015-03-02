@@ -8,16 +8,20 @@ require 'pathname'
 require 'zfstools'
 
 opts = GetoptLong.new(
+  [ "--exclude",                         "-x",           GetoptLong::REQUIRED_ARGUMENT ],
   [ "--pool",                            "-P",           GetoptLong::REQUIRED_ARGUMENT ],
   [ "--dry-run",                         "-n",           GetoptLong::NO_ARGUMENT ],
   [ "--verbose",                         "-v",           GetoptLong::NO_ARGUMENT ]
 )
 
 $dry_run = false
+$excludes = nil
 pool = nil
 skip = 1
 opts.each do |opt, arg|
   case opt
+  when '--exclude'
+    $excludes = arg
   when '--pool'
     pool = arg
   when '--dry-run'
@@ -32,6 +36,7 @@ def usage
 Usage: #{$0} [-P pool] [-nv] DIR INTERVALS...
   EOF
   format = "    %-15s %s"
+  puts format % ["-x file", "Exclude snapshots listed in file."]
   puts format % ["-P pool", "Act only on the specified pool."]
   puts format % ["-n", "Do a dry-run. Nothing is committed. Only show what would be done."]
   puts format % ["-v", "Show what is being done."]
@@ -45,6 +50,10 @@ usage if ARGV.length < 2
 output = Pathname.new(ARGV[0])
 $intervals = ARGV[1..-1]
 $interval = $intervals.last
+
+if $excludes
+  $excludes = File.readlines($excludes).map { |line| line.chomp }
+end
 
 def in_pairs(list)
   previous = nil
@@ -63,6 +72,14 @@ def snapshot_included(snapshot)
   end
 end
 
+def snapshot_excluded(snapshot)
+  if $excludes
+    $excludes.any? do |exclude|
+      snapshot.name[-exclude.length, exclude.length] == exclude
+    end
+  end
+end
+
 def timestamp_of(snapshot)
   name = snapshot.snapshot_name.dup
   name.slice!(SNAPSHOT_RE)
@@ -74,6 +91,7 @@ datasets = find_eligible_datasets($interval, pool)
 datasets['included'].each do |dataset|
   snapshots = Zfs::Snapshot.list(dataset.name, 'sort' => 'creation').select {|s| snapshot_included(s) }.reverse
   in_pairs(snapshots) do |to, from|
+    next if snapshot_excluded(to)
     stream = output + "#{File.basename(dataset.name)}-#{$interval}-#{timestamp_of(from)}-#{timestamp_of(to)}.zfsstream"
     stream_lrz = stream.sub_ext('.zfsstream.lrz')
     unless stream_lrz.exist?
