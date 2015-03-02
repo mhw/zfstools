@@ -29,18 +29,22 @@ end
 
 def usage
   puts <<-EOF
-Usage: #{$0} [-P pool] [-nv] DIR INTERVAL
+Usage: #{$0} [-P pool] [-nv] DIR INTERVALS...
   EOF
   format = "    %-15s %s"
   puts format % ["-P pool", "Act only on the specified pool."]
   puts format % ["-n", "Do a dry-run. Nothing is committed. Only show what would be done."]
   puts format % ["-v", "Show what is being done."]
   puts format % ["DIR", "The directory to save snapshots to."]
-  puts format % ["INTERVAL", "The snapshot interval to save."]
+  puts format % ["INTERVAL", "The snapshot intervals to save. e.g. monthly weekly daily"]
   exit
 end
 
 usage if ARGV.length < 2
+
+output = Pathname.new(ARGV[0])
+$intervals = ARGV[1..-1]
+$interval = $intervals.last
 
 def in_pairs(list)
   previous = nil
@@ -50,29 +54,32 @@ def in_pairs(list)
   end
 end
 
+SNAPSHOT_RE = %r{\Azfs-auto-snap_(\w+)-}
+
+def snapshot_included(snapshot)
+  if snapshot.snapshot_name =~ SNAPSHOT_RE
+    interval = Regexp.last_match(1)
+    $intervals.include? interval
+  end
+end
+
 def timestamp_of(snapshot)
   name = snapshot.snapshot_name.dup
-  name.slice!($prefix_re)
+  name.slice!(SNAPSHOT_RE)
   name
 end
 
-output = Pathname.new(ARGV[0])
-interval = ARGV[1]
-prefix = snapshot_prefix(interval)
-prefix_match = "@#{prefix}"
-$prefix_re = %r{\A#{Regexp.escape(prefix)}}
-
-datasets = find_eligible_datasets(interval, pool)
+datasets = find_eligible_datasets($interval, pool)
 
 datasets['included'].each do |dataset|
-  snapshots = Zfs::Snapshot.list(dataset.name).select {|s| s.name.include?(prefix_match) }.reverse
+  snapshots = Zfs::Snapshot.list(dataset.name, 'sort' => 'creation').select {|s| snapshot_included(s) }.reverse
   in_pairs(snapshots) do |to, from|
-    stream = output + "#{File.basename(dataset.name)}-#{interval}-#{timestamp_of(from)}-#{timestamp_of(to)}.zfsstream"
+    stream = output + "#{File.basename(dataset.name)}-#{$interval}-#{timestamp_of(from)}-#{timestamp_of(to)}.zfsstream"
     stream_lrz = stream.sub_ext('.zfsstream.lrz')
     unless stream_lrz.exist?
       unless stream.exist?
         # previously used -R -I
-        cmd = "zfs send #{$verbose ? '-v ' : ''}-I #{from.snapshot_name} #{to.name} >#{stream}"
+        cmd = "zfs send #{$verbose ? '-v ' : ''}-i #{from.snapshot_name} #{to.name} >#{stream}"
         puts cmd if $verbose
         system(cmd) unless $dry_run
       end
