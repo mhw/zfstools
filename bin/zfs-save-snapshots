@@ -97,7 +97,7 @@ datasets['included'].each do |dataset|
     unless stream_lrz.exist?
       unless stream.exist?
         # previously used -R -I
-        cmd = "zfs send #{$verbose ? '-v ' : ''}-i #{from.snapshot_name} #{to.name} >#{stream}"
+        cmd = "zfs send #{$verbose ? '-v ' : ''}-R -i #{from.snapshot_name} #{to.name} >#{stream}"
         puts cmd if $verbose
         system(cmd) unless $dry_run
       end
