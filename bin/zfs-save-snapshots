@@ -89,6 +89,7 @@ end
 datasets = find_eligible_datasets($interval, pool)
 
 datasets['included'].each do |dataset|
+  existing_snapshots = Dir[output.join(File.basename(dataset.name) + '*')]
   snapshots = Zfs::Snapshot.list(dataset.name, 'sort' => 'creation').select {|s| snapshot_included(s) }.reverse
   in_pairs(snapshots) do |to, from|
     next if snapshot_excluded(to)
@@ -105,5 +106,9 @@ datasets['included'].each do |dataset|
       puts cmd if $verbose
       system(cmd) unless $dry_run
     end
+    existing_snapshots.delete(stream.to_s)
+    existing_snapshots.delete(stream_lrz.to_s)
   end
+  puts "rm #{existing_snapshots.join(' ')}" if $verbose
+  File.delete(*existing_snapshots) unless $dry_run
 end
